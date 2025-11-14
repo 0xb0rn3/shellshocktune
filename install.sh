@@ -80,26 +80,26 @@ install_dependencies() {
     case $DISTRO in
         arch|archcraft|manjaro)
             log INFO "Using pacman..."
-            pacman -Sy --noconfirm --needed dialog gcc git curl stress-ng sysbench || {
+            pacman -Sy --noconfirm --needed dialog schedutil gcc git curl stress-ng sysbench || {
                 log WARNING "Some packages may have failed to install"
             }
             ;;
         debian|ubuntu|kali|linuxmint|pop)
             log INFO "Using apt..."
             apt-get update
-            apt-get install -y dialog gcc git curl stress-ng sysbench || {
+            apt-get install -y dialog gcc git curl schedutil stress-ng sysbench || {
                 log WARNING "Some packages may have failed to install"
             }
             ;;
         fedora|rhel|centos|rocky|alma)
             log INFO "Using dnf..."
-            dnf install -y dialog gcc git curl stress-ng sysbench || {
+            dnf install -y dialog gcc git curl schedutil stress-ng sysbench || {
                 log WARNING "Some packages may have failed to install"
             }
             ;;
         opensuse*|sles)
             log INFO "Using zypper..."
-            zypper install -y dialog gcc git curl stress-ng || {
+            zypper install -y dialog gcc git curl schedutil stress-ng || {
                 log WARNING "Some packages may have failed to install"
             }
             ;;
