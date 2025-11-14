@@ -23,7 +23,7 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/shellshocktune"
 BIN_DIR="/usr/local/bin"
 TUNER_NAME="shellshocktune"
-PATCH="$INSTALLER_DIR/scripts/apply-patch.sh"
+PATCH="$INSTALLER_DIR/scripts/apply-stage.sh"
 print_banner() {
     clear
     echo -e "${CYAN}"
