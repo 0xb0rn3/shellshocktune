@@ -19,10 +19,11 @@ RESET='\033[0m'
 BOLD='\033[1m'
 
 # Configuration
+INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/shellshocktune"
 BIN_DIR="/usr/local/bin"
 TUNER_NAME="shellshocktune"
-
+PATCH="$INSTALLER_DIR/scripts/apply-patch.sh"
 print_banner() {
     clear
     echo -e "${CYAN}"
@@ -136,6 +137,7 @@ copy_files() {
     # Copy main tuner script
     if [[ -f "$source_dir/shellshocktune" ]]; then
         cp "$source_dir/shellshocktune" "$INSTALL_DIR/"
+        cp  "$PATCH" "$INSTALL_DIR/"
         chmod +x "$INSTALL_DIR/shellshocktune"
     else
         log ERROR "shellshocktune script not found!"
