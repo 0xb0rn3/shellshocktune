@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 #==============================================================================
 # ShellShockTune v0.0.1 - Linux Performance Tuner
@@ -166,8 +166,8 @@ detect_system() {
     # Detect distribution
     if [[ -f /etc/os-release ]]; then
         source /etc/os-release
-        DISTRO=$ID
-        DISTRO_VERSION=$VERSION_ID
+        DISTRO=${ID:-unknown}
+        DISTRO_VERSION=${VERSION_ID:-unknown}
     else
         DISTRO="unknown"
         DISTRO_VERSION="unknown"
