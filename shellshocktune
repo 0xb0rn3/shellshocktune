@@ -1,0 +1,500 @@
+#!/bin/bash
+
+#==============================================================================
+# ShellShockTune v0.0.1 - Linux Performance Tuner
+# Author: 0xbv1 | 0xb0rn3 {shell shock}
+# Description: Automated Linux system tuning from kernel to userspace
+# License: MIT
+#==============================================================================
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+RESET='\033[0m'
+BOLD='\033[1m'
+
+# Configuration
+VERSION="0.0.1"
+TUNER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKUP_DIR="/var/lib/shellshocktune/backups"
+STATE_FILE="/var/lib/shellshocktune/state"
+LOG_FILE="/var/log/shellshocktune.log"
+MODULES_DIR="$TUNER_DIR/modules"
+PROFILES_DIR="$TUNER_DIR/profiles"
+SCRIPTS_DIR="$TUNER_DIR/scripts"
+
+# Stage definitions
+declare -A STAGES=(
+    [0]="Stock - Distro defaults"
+    [1]="Optimized - Safe tweaks (scheduler, I/O)"
+    [2]="Performance - Aggressive (CPU gov, network stack)"
+    [3]="Extreme - Maximum (custom kernel params, RT patches)"
+    [4]="Redteam - Stage 3 + security tools + wireless tweaks"
+)
+
+#==============================================================================
+# Core Functions
+#==============================================================================
+
+print_banner() {
+    clear
+    echo -e "${CYAN}"
+    cat << "EOF"
+   _____ __         ____   _____ __                __  ______                
+  / ___// /_  ___  / / /  / ___// /_  ____  _____/ /_/_  __/_  ______  ___ 
+  \__ \/ __ \/ _ \/ / /   \__ \/ __ \/ __ \/ ___/ //_// / / / / / __ \/ _ \
+ ___/ / / / /  __/ / /   ___/ / / / / /_/ / /__/ ,<  / / / /_/ / / / /  __/
+/____/_/ /_/\___/_/_/   /____/_/ /_/\____/\___/_/|_|/_/  \__,_/_/ /_/\___/ 
+                                                                            
+EOF
+    echo -e "${RESET}"
+    echo -e "${WHITE}${BOLD}Linux Performance Tuner v$VERSION${RESET}"
+    echo -e "${MAGENTA}by 0xbv1 | 0xb0rn3 {shell shock}${RESET}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+}
+
+log() {
+    local level=$1
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    
+    case $level in
+        INFO)  echo -e "${BLUE}[INFO]${RESET} $message" ;;
+        SUCCESS) echo -e "${GREEN}[✓]${RESET} $message" ;;
+        WARNING) echo -e "${YELLOW}[!]${RESET} $message" ;;
+        ERROR)   echo -e "${RED}[✗]${RESET} $message" ;;
+        DEBUG)   echo -e "${MAGENTA}[DEBUG]${RESET} $message" ;;
+    esac
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log WARNING "ShellShockTune requires root privileges"
+        echo -e "${YELLOW}Requesting sudo elevation...${RESET}"
+        exec sudo "$0" "$@"
+    fi
+}
+
+initialize_dirs() {
+    log INFO "Initializing ShellShockTune directories..."
+    mkdir -p "$BACKUP_DIR" "$MODULES_DIR" "$PROFILES_DIR" "$SCRIPTS_DIR"
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$STATE_FILE")"
+    
+    # Create initial state file if doesn't exist
+    if [[ ! -f "$STATE_FILE" ]]; then
+        echo "CURRENT_STAGE=0" > "$STATE_FILE"
+        echo "LAST_BACKUP=$(date +%s)" >> "$STATE_FILE"
+    fi
+    
+    log SUCCESS "Directories initialized"
+}
+
+backup_system() {
+    log INFO "Creating system backup..."
+    local backup_timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_path="$BACKUP_DIR/$backup_timestamp"
+    
+    mkdir -p "$backup_path"
+    
+    # Backup critical files
+    local files_to_backup=(
+        "/etc/sysctl.conf"
+        "/etc/sysctl.d/"
+        "/etc/default/grub"
+        "/etc/fstab"
+        "/etc/security/limits.conf"
+        "/etc/modprobe.d/"
+        "/etc/udev/rules.d/"
+    )
+    
+    for file in "${files_to_backup[@]}"; do
+        if [[ -e "$file" ]]; then
+            cp -a "$file" "$backup_path/" 2>/dev/null || true
+            log DEBUG "Backed up: $file"
+        fi
+    done
+    
+    # Save current kernel parameters
+    sysctl -a > "$backup_path/sysctl_before.txt" 2>/dev/null
+    
+    # Save current state
+    echo "BACKUP_PATH=$backup_path" >> "$STATE_FILE"
+    
+    log SUCCESS "System backup created at: $backup_path"
+}
+
+restore_system() {
+    log WARNING "Initiating system restore..."
+    
+    if [[ ! -f "$STATE_FILE" ]]; then
+        log ERROR "No state file found. Cannot restore."
+        return 1
+    fi
+    
+    source "$STATE_FILE"
+    
+    if [[ -z "${BACKUP_PATH:-}" ]] || [[ ! -d "$BACKUP_PATH" ]]; then
+        log ERROR "No valid backup found. Cannot restore."
+        return 1
+    fi
+    
+    log INFO "Restoring from: $BACKUP_PATH"
+    
+    # Restore files
+    cp -a "$BACKUP_PATH"/* / 2>/dev/null || true
+    
+    # Reload sysctl
+    sysctl -p &>/dev/null
+    
+    log SUCCESS "System restored to previous state"
+    log INFO "Reboot recommended for complete restoration"
+}
+
+detect_system() {
+    log INFO "Detecting system configuration..."
+    
+    # Detect distribution
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        DISTRO=$ID
+        DISTRO_VERSION=$VERSION_ID
+    else
+        DISTRO="unknown"
+        DISTRO_VERSION="unknown"
+    fi
+    
+    # Detect CPU
+    CPU_VENDOR=$(lscpu | grep "Vendor ID" | awk '{print $3}')
+    CPU_MODEL=$(lscpu | grep "Model name" | cut -d: -f2 | xargs)
+    CPU_CORES=$(nproc)
+    
+    # Detect kernel
+    KERNEL_VERSION=$(uname -r)
+    
+    # Detect init system
+    if [[ -d /run/systemd/system ]]; then
+        INIT_SYSTEM="systemd"
+    else
+        INIT_SYSTEM="other"
+    fi
+    
+    log SUCCESS "System detected:"
+    echo -e "  ${CYAN}Distribution:${RESET} $DISTRO $DISTRO_VERSION"
+    echo -e "  ${CYAN}CPU:${RESET} $CPU_MODEL ($CPU_CORES cores)"
+    echo -e "  ${CYAN}Vendor:${RESET} $CPU_VENDOR"
+    echo -e "  ${CYAN}Kernel:${RESET} $KERNEL_VERSION"
+    echo -e "  ${CYAN}Init System:${RESET} $INIT_SYSTEM"
+    echo ""
+}
+
+check_dependencies() {
+    log INFO "Checking dependencies..."
+    
+    local deps=(
+        "dialog:dialog"
+        "gcc:gcc"
+        "git:git"
+        "curl:curl"
+        "stress-ng:stress-ng"
+        "sysbench:sysbench"
+    )
+    
+    local missing=()
+    
+    for dep in "${deps[@]}"; do
+        local cmd="${dep%%:*}"
+        local pkg="${dep##*:}"
+        
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$pkg")
+        fi
+    done
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log WARNING "Missing dependencies: ${missing[*]}"
+        echo -e "${YELLOW}Install missing packages? [y/N]:${RESET} "
+        read -r response
+        
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            install_dependencies "${missing[@]}"
+        else
+            log WARNING "Some features may not work without dependencies"
+        fi
+    else
+        log SUCCESS "All dependencies satisfied"
+    fi
+}
+
+install_dependencies() {
+    local packages=("$@")
+    log INFO "Installing dependencies: ${packages[*]}"
+    
+    case $DISTRO in
+        arch|archcraft|manjaro)
+            pacman -Sy --noconfirm "${packages[@]}"
+            ;;
+        debian|ubuntu|kali)
+            apt-get update
+            apt-get install -y "${packages[@]}"
+            ;;
+        fedora|rhel|centos)
+            dnf install -y "${packages[@]}"
+            ;;
+        *)
+            log ERROR "Unsupported distribution for automatic installation"
+            return 1
+            ;;
+    esac
+    
+    log SUCCESS "Dependencies installed"
+}
+
+setup_cpu_governor() {
+    log INFO "Setting up CPU Governor module..."
+    
+    local cpu_gov_dir="$MODULES_DIR/cpu-governor"
+    
+    if [[ ! -d "$cpu_gov_dir" ]]; then
+        mkdir -p "$cpu_gov_dir"
+        cd "$cpu_gov_dir"
+        
+        log INFO "Downloading cpu-governor from GitHub..."
+        curl -sL https://raw.githubusercontent.com/0xb0rn3/cpu-governor/main/cpu-governor.c -o cpu-governor.c
+        
+        if [[ -f cpu-governor.c ]]; then
+            log INFO "Compiling cpu-governor..."
+            gcc -O2 -march=native -o cpu-governor cpu-governor.c
+            chmod +x cpu-governor
+            log SUCCESS "CPU Governor compiled successfully"
+        else
+            log ERROR "Failed to download cpu-governor"
+            return 1
+        fi
+    else
+        log INFO "CPU Governor already installed"
+    fi
+}
+
+run_benchmark() {
+    local phase=$1  # "before" or "after"
+    local benchmark_dir="$BACKUP_DIR/benchmarks"
+    local result_file="$benchmark_dir/${phase}_$(date +%s).txt"
+    
+    mkdir -p "$benchmark_dir"
+    
+    log INFO "Running $phase-tuning benchmark..."
+    
+    {
+        echo "=== ShellShockTune Benchmark - $phase tuning ==="
+        echo "Timestamp: $(date)"
+        echo "System: $DISTRO $DISTRO_VERSION"
+        echo "Kernel: $KERNEL_VERSION"
+        echo ""
+        
+        # CPU stress test
+        echo "=== CPU Performance ==="
+        if command -v stress-ng &>/dev/null; then
+            stress-ng --cpu $CPU_CORES --timeout 10s --metrics-brief 2>&1 | grep "bogo ops"
+        fi
+        
+        # Memory bandwidth
+        echo "=== Memory Performance ==="
+        if command -v sysbench &>/dev/null; then
+            sysbench memory --memory-total-size=1G run 2>&1 | grep -E "transferred|MiB/sec"
+        fi
+        
+        # Disk I/O
+        echo "=== Disk I/O ==="
+        if command -v dd &>/dev/null; then
+            dd if=/dev/zero of=/tmp/test_shellshock bs=1M count=1024 2>&1 | grep -i copied
+            rm -f /tmp/test_shellshock
+        fi
+        
+        # Current sysctl parameters
+        echo "=== Key Kernel Parameters ==="
+        sysctl vm.swappiness vm.dirty_ratio vm.dirty_background_ratio net.core.rmem_max net.core.wmem_max 2>/dev/null
+        
+    } | tee "$result_file"
+    
+    log SUCCESS "Benchmark results saved: $result_file"
+    
+    # Save result path to state
+    echo "${phase^^}_BENCHMARK=$result_file" >> "$STATE_FILE"
+}
+
+compare_benchmarks() {
+    source "$STATE_FILE"
+    
+    if [[ -z "${BEFORE_BENCHMARK:-}" ]] || [[ -z "${AFTER_BENCHMARK:-}" ]]; then
+        log WARNING "Cannot compare - missing benchmark data"
+        return 1
+    fi
+    
+    log INFO "Comparing before/after performance..."
+    
+    echo -e "\n${CYAN}=== Performance Comparison ===${RESET}\n"
+    
+    echo -e "${WHITE}BEFORE:${RESET}"
+    grep -E "bogo ops|MiB/sec|copied" "$BEFORE_BENCHMARK" | sed 's/^/  /'
+    
+    echo -e "\n${WHITE}AFTER:${RESET}"
+    grep -E "bogo ops|MiB/sec|copied" "$AFTER_BENCHMARK" | sed 's/^/  /'
+    
+    echo -e "\n${GREEN}Press Enter to continue...${RESET}"
+    read -r
+}
+
+show_main_menu() {
+    local choice
+    choice=$(dialog --clear --backtitle "ShellShockTune v$VERSION" \
+        --title "Main Menu" \
+        --menu "Select an option:" 20 70 12 \
+        1 "Select Tuning Stage" \
+        2 "Apply Current Configuration" \
+        3 "System Information" \
+        4 "Benchmark System" \
+        5 "Compare Performance" \
+        6 "Load Profile" \
+        7 "Save Profile" \
+        8 "Restore System" \
+        9 "Module Configuration" \
+        10 "Advanced Options" \
+        11 "View Logs" \
+        12 "Exit" \
+        3>&1 1>&2 2>&3)
+    
+    echo "$choice"
+}
+
+show_stage_menu() {
+    local choice
+    choice=$(dialog --clear --backtitle "ShellShockTune v$VERSION" \
+        --title "Select Tuning Stage" \
+        --menu "Choose your performance level:" 20 70 5 \
+        0 "${STAGES[0]}" \
+        1 "${STAGES[1]}" \
+        2 "${STAGES[2]}" \
+        3 "${STAGES[3]}" \
+        4 "${STAGES[4]}" \
+        3>&1 1>&2 2>&3)
+    
+    echo "$choice"
+}
+
+apply_stage() {
+    local stage=$1
+    
+    log INFO "Applying Stage $stage: ${STAGES[$stage]}"
+    
+    # Backup system before changes
+    backup_system
+    
+    # Run before benchmark
+    run_benchmark "before"
+    
+    # Apply stage via script
+    if [[ -f "$SCRIPTS_DIR/apply-stage.sh" ]]; then
+        bash "$SCRIPTS_DIR/apply-stage.sh" "$stage" || {
+            log ERROR "Stage application failed - restoring system"
+            restore_system
+            return 1
+        }
+    else
+        log ERROR "apply-stage.sh not found"
+        return 1
+    fi
+    
+    # Update state
+    sed -i "s/CURRENT_STAGE=.*/CURRENT_STAGE=$stage/" "$STATE_FILE"
+    
+    # Run after benchmark
+    run_benchmark "after"
+    
+    log SUCCESS "Stage $stage applied successfully"
+    
+    dialog --clear --backtitle "ShellShockTune v$VERSION" \
+        --title "Success" \
+        --msgbox "Stage $stage applied successfully!\n\nA system reboot is recommended for all changes to take effect.\n\nBenchmark results have been saved." 12 60
+}
+
+#==============================================================================
+# Main Execution
+#==============================================================================
+
+main() {
+    check_root "$@"
+    print_banner
+    initialize_dirs
+    detect_system
+    check_dependencies
+    setup_cpu_governor
+    
+    while true; do
+        choice=$(show_main_menu)
+        
+        case $choice in
+            1)  # Select Stage
+                stage=$(show_stage_menu)
+                if [[ -n "$stage" ]]; then
+                    apply_stage "$stage"
+                fi
+                ;;
+            2)  # Apply Configuration
+                dialog --msgbox "Feature coming soon!" 8 40
+                ;;
+            3)  # System Information
+                detect_system
+                echo -e "${GREEN}Press Enter to continue...${RESET}"
+                read -r
+                ;;
+            4)  # Benchmark
+                run_benchmark "manual"
+                ;;
+            5)  # Compare Performance
+                compare_benchmarks
+                ;;
+            6)  # Load Profile
+                dialog --msgbox "Feature coming soon!" 8 40
+                ;;
+            7)  # Save Profile
+                dialog --msgbox "Feature coming soon!" 8 40
+                ;;
+            8)  # Restore System
+                if dialog --yesno "Restore system to previous backup?\n\nThis will revert all changes." 10 50; then
+                    restore_system
+                fi
+                ;;
+            9)  # Module Configuration
+                dialog --msgbox "Feature coming soon!" 8 40
+                ;;
+            10) # Advanced Options
+                dialog --msgbox "Feature coming soon!" 8 40
+                ;;
+            11) # View Logs
+                dialog --textbox "$LOG_FILE" 30 100
+                ;;
+            12|"") # Exit
+                clear
+                log INFO "ShellShockTune exiting..."
+                echo -e "${CYAN}Thank you for using ShellShockTune!${RESET}"
+                echo -e "${MAGENTA}by 0xbv1 | 0xb0rn3 {shell shock}${RESET}"
+                exit 0
+                ;;
+        esac
+    done
+}
+
+# Trap errors and restore
+trap 'log ERROR "Script failed at line $LINENO"; restore_system; exit 1' ERR
+
+main "$@"

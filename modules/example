@@ -1,0 +1,325 @@
+#!/bin/bash
+
+#==============================================================================
+# ShellShockTune Module Template
+# Use this template to create new tuning modules
+#==============================================================================
+
+# Module Information
+MODULE_NAME="example"
+MODULE_VERSION="1.0.0"
+MODULE_AUTHOR="0xbv1"
+MODULE_DESCRIPTION="Example module template"
+
+# Module dependencies (space-separated list)
+MODULE_DEPS="curl jq"
+
+# Safety level (1-5, where 5 is most aggressive/risky)
+SAFETY_LEVEL=3
+
+set -euo pipefail
+
+# Colors for consistent output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RESET='\033[0m'
+
+#==============================================================================
+# Helper Functions
+#==============================================================================
+
+log() {
+    local level=$1
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    echo "[$timestamp] [$MODULE_NAME] [$level] $message" >> /var/log/shellshocktune.log
+    
+    case $level in
+        INFO)  echo -e "${BLUE}[$MODULE_NAME INFO]${RESET} $message" ;;
+        SUCCESS) echo -e "${GREEN}[$MODULE_NAME ✓]${RESET} $message" ;;
+        WARNING) echo -e "${YELLOW}[$MODULE_NAME !]${RESET} $message" ;;
+        ERROR)   echo -e "${RED}[$MODULE_NAME ✗]${RESET} $message" ;;
+    esac
+}
+
+check_dependencies() {
+    local missing=()
+    
+    for dep in $MODULE_DEPS; do
+        if ! command -v "$dep" &>/dev/null; then
+            missing+=("$dep")
+        fi
+    done
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log ERROR "Missing dependencies: ${missing[*]}"
+        return 1
+    fi
+    
+    return 0
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log ERROR "Module requires root privileges"
+        return 1
+    fi
+    return 0
+}
+
+backup_file() {
+    local file=$1
+    local backup_dir="/var/lib/shellshocktune/backups/$(date +%Y%m%d_%H%M%S)"
+    
+    if [[ -f "$file" ]]; then
+        mkdir -p "$backup_dir"
+        cp -a "$file" "$backup_dir/"
+        log INFO "Backed up: $file"
+    fi
+}
+
+write_sysctl() {
+    local key=$1
+    local value=$2
+    
+    # Write to runtime
+    sysctl -w "${key}=${value}" &>/dev/null || {
+        log ERROR "Failed to set ${key}=${value}"
+        return 1
+    }
+    
+    # Write to persistent config
+    echo "${key} = ${value}" >> /etc/sysctl.d/99-shellshocktune.conf
+    
+    log INFO "Set ${key} = ${value}"
+}
+
+#==============================================================================
+# Module Functions
+#==============================================================================
+
+module_check() {
+    # Check if module can run on this system
+    log INFO "Checking module compatibility..."
+    
+    check_root || return 1
+    check_dependencies || return 1
+    
+    # Add your custom checks here
+    # Example: Check for specific kernel version, hardware, etc.
+    
+    log SUCCESS "Module checks passed"
+    return 0
+}
+
+module_apply_stage_1() {
+    # Light/safe optimizations
+    log INFO "Applying Stage 1 optimizations..."
+    
+    # Example: Set conservative sysctl values
+    write_sysctl "example.parameter1" "10"
+    write_sysctl "example.parameter2" "100"
+    
+    log SUCCESS "Stage 1 applied"
+}
+
+module_apply_stage_2() {
+    # Moderate optimizations
+    log INFO "Applying Stage 2 optimizations..."
+    
+    # Apply Stage 1 first
+    module_apply_stage_1
+    
+    # Add Stage 2 specific changes
+    write_sysctl "example.parameter1" "5"
+    write_sysctl "example.parameter3" "1000"
+    
+    log SUCCESS "Stage 2 applied"
+}
+
+module_apply_stage_3() {
+    # Aggressive optimizations
+    log INFO "Applying Stage 3 optimizations..."
+    
+    # Apply Stage 2 first
+    module_apply_stage_2
+    
+    # Add Stage 3 specific changes
+    write_sysctl "example.parameter1" "0"
+    write_sysctl "example.parameter4" "10000"
+    
+    # Example: Load kernel module
+    modprobe example_driver 2>/dev/null || {
+        log WARNING "Failed to load example_driver module"
+    }
+    
+    log SUCCESS "Stage 3 applied"
+}
+
+module_apply_stage_4() {
+    # Redteam/security specific
+    log INFO "Applying Stage 4 (Redteam) optimizations..."
+    
+    # Apply Stage 3 first
+    module_apply_stage_3
+    
+    # Add redteam-specific changes
+    # Example: Install security tools
+    if command -v pacman &>/dev/null; then
+        pacman -S --noconfirm --needed example-tool 2>/dev/null || true
+    elif command -v apt &>/dev/null; then
+        apt-get install -y example-tool 2>/dev/null || true
+    fi
+    
+    log SUCCESS "Stage 4 applied"
+}
+
+module_restore() {
+    # Restore to defaults
+    log INFO "Restoring module defaults..."
+    
+    # Remove custom sysctl entries
+    grep -v "example.parameter" /etc/sysctl.d/99-shellshocktune.conf > /tmp/sysctl.tmp || true
+    mv /tmp/sysctl.tmp /etc/sysctl.d/99-shellshocktune.conf
+    
+    # Reload sysctl
+    sysctl -p /etc/sysctl.d/99-shellshocktune.conf &>/dev/null
+    
+    # Unload modules
+    modprobe -r example_driver 2>/dev/null || true
+    
+    log SUCCESS "Module restored to defaults"
+}
+
+module_verify() {
+    # Verify module applied correctly
+    log INFO "Verifying module configuration..."
+    
+    local errors=0
+    
+    # Example: Check sysctl value
+    local current_value=$(sysctl -n example.parameter1 2>/dev/null || echo "NOT_SET")
+    if [[ "$current_value" != "0" ]] && [[ "$current_value" != "NOT_SET" ]]; then
+        log WARNING "example.parameter1 not set correctly (expected 0, got $current_value)"
+        ((errors++))
+    fi
+    
+    if [[ $errors -eq 0 ]]; then
+        log SUCCESS "Module verification passed"
+        return 0
+    else
+        log ERROR "Module verification failed with $errors errors"
+        return 1
+    fi
+}
+
+module_benchmark() {
+    # Run module-specific benchmarks
+    log INFO "Running module benchmarks..."
+    
+    local benchmark_file="/var/lib/shellshocktune/backups/benchmarks/${MODULE_NAME}_$(date +%s).txt"
+    
+    {
+        echo "=== $MODULE_NAME Benchmark ==="
+        echo "Timestamp: $(date)"
+        echo ""
+        
+        # Add your benchmark commands here
+        # Example:
+        echo "Example metric: $(cat /proc/sys/example/parameter1 2>/dev/null || echo 'N/A')"
+        
+    } | tee "$benchmark_file"
+    
+    log SUCCESS "Benchmark saved: $benchmark_file"
+}
+
+module_info() {
+    # Display module information
+    cat << EOF
+Module Name:        $MODULE_NAME
+Version:            $MODULE_VERSION
+Author:             $MODULE_AUTHOR
+Description:        $MODULE_DESCRIPTION
+Safety Level:       $SAFETY_LEVEL/5
+Dependencies:       $MODULE_DEPS
+
+Supported Stages:
+  Stage 1: Light optimization
+  Stage 2: Moderate optimization
+  Stage 3: Aggressive optimization
+  Stage 4: Redteam configuration
+
+EOF
+}
+
+#==============================================================================
+# Main Entry Point
+#==============================================================================
+
+main() {
+    local action=${1:-help}
+    
+    case $action in
+        check)
+            module_check
+            ;;
+        apply)
+            local stage=${2:-1}
+            module_check || exit 1
+            
+            case $stage in
+                1) module_apply_stage_1 ;;
+                2) module_apply_stage_2 ;;
+                3) module_apply_stage_3 ;;
+                4) module_apply_stage_4 ;;
+                *) 
+                    log ERROR "Invalid stage: $stage"
+                    exit 1
+                    ;;
+            esac
+            
+            module_verify
+            ;;
+        restore)
+            module_restore
+            ;;
+        verify)
+            module_verify
+            ;;
+        benchmark)
+            module_benchmark
+            ;;
+        info)
+            module_info
+            ;;
+        help|*)
+            cat << EOF
+Usage: $0 <action> [arguments]
+
+Actions:
+  check              Check if module can run
+  apply <stage>      Apply module for specific stage (1-4)
+  restore            Restore module defaults
+  verify             Verify module configuration
+  benchmark          Run module benchmarks
+  info               Display module information
+  help               Show this help message
+
+Example:
+  $0 apply 2         Apply Stage 2 optimizations
+  $0 verify          Verify configuration
+  $0 restore         Restore defaults
+
+EOF
+            ;;
+    esac
+}
+
+# Trap errors
+trap 'log ERROR "Module failed at line $LINENO"' ERR
+
+main "$@"
