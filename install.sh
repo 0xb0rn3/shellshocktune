@@ -59,12 +59,11 @@ check_root() {
         exec sudo "$0" "$@"
     fi
 }
-
 detect_distro() {
     if [[ -f /etc/os-release ]]; then
         source /etc/os-release
-        DISTRO=$ID
-        DISTRO_VERSION=$VERSION_ID
+        DISTRO=${ID:-unknown}
+        DISTRO_VERSION=${VERSION_ID:-unknown}
     else
         DISTRO="unknown"
         DISTRO_VERSION="unknown"
